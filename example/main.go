@@ -261,8 +261,7 @@ func (m *model) sizeInputs() {
 
 		m.inputs[i].SetWidth(width)
 
-		// Adjust editor height to account for title bar (always shown)
-		heightAdjustment := helpHeight + 1 // +1 for title bar
+		heightAdjustment := helpHeight + 3 // Adjust for help and top bar
 
 		m.inputs[i].SetHeight(m.height - heightAdjustment)
 	}
@@ -279,8 +278,11 @@ func (m model) View() string {
 	// Create a top bar if we have a valid width
 
 	titleBar := lipgloss.NewStyle().
+		Height(1).
+		Width(m.width - 2).
 		Align(lipgloss.Center).
-		Render("bubbweb - example editor")
+		Border(lipgloss.RoundedBorder()).
+		Render("bubbweb - example editor with mouse support")
 
 	// Set the top bar with a full-width title
 	topBar = titleBar
