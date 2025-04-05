@@ -30,13 +30,8 @@ func (b *MinReadBuffer) Write(p []byte) (n int, err error) {
 	return b.buf.Write(p)
 }
 
-// Program represents a BubbleTea program configured for WASM
-type Program struct {
-	teaProgram *tea.Program
-}
-
 // NewProgram creates a new BubbleTea program configured for WASM
-func NewProgram(model tea.Model, options ...tea.ProgramOption) *Program {
+func NewProgram(model tea.Model, options ...tea.ProgramOption) *tea.Program {
 	fromJs := &MinReadBuffer{buf: bytes.NewBuffer(nil)}
 	fromGo := bytes.NewBuffer(nil)
 
@@ -108,11 +103,5 @@ func NewProgram(model tea.Model, options ...tea.ProgramOption) *Program {
 		return nil
 	}))
 
-	return &Program{teaProgram: prog}
-}
-
-// Run starts the BubbleTea program
-func (p *Program) Run() (tea.Model, error) {
-	fmt.Println("Starting program...")
-	return p.teaProgram.Run()
+	return prog
 }
