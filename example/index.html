@@ -1,20 +1,23 @@
+<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.min.css" rel="stylesheet">
     <script src="wasm_exec.js"></script>
     <style>
         html, body {
             height: 100%;
             margin: 0;
             padding: 0;
+            background-color: black;
         }
 
         .terminal-container {
             /* this is important */
             overflow: hidden;
+            background-color: black;
         }
 
         .xterm .xterm-viewport {
@@ -68,9 +71,15 @@
         term.onData((data) => (bubbletea_write(data)));
     }
 
-    function init() {
-        const go = new Go();
-        WebAssembly.instantiateStreaming(fetch("./bubbletea.wasm"), go.importObject).then((result) => {
+    async function loadWasm(retryCount = 0) {
+        const maxRetries = 10;
+        const baseDelay = 1000; // Start with 1 second delay
+        
+        try {
+            console.log(`Attempting to load WASM (attempt ${retryCount + 1})`);
+            const go = new Go();
+            const result = await WebAssembly.instantiateStreaming(fetch("./bubbletea.wasm"), go.importObject);
+            
             // Run wasm
             go.run(result.instance).then(() => {
                 console.log("wasm finished");
@@ -78,9 +87,39 @@
 
             // Init terminal
             initTerminal();
-        })
+            
+            return true;
+        } catch (error) {
+            console.error(`Failed to load WASM (attempt ${retryCount + 1}):`, error);
+            
+            if (retryCount < maxRetries) {
+                // Calculate exponential backoff delay with jitter
+                const delay = baseDelay * Math.pow(1.5, retryCount) * (0.9 + Math.random() * 0.2);
+                console.log(`Retrying in ${Math.round(delay / 1000)} seconds...`);
+                
+                // Wait and retry
+                return new Promise(resolve => {
+                    setTimeout(() => {
+                        resolve(loadWasm(retryCount + 1));
+                    }, delay);
+                });
+            } else {
+                console.error(`Failed to load WASM after ${maxRetries} attempts. Giving up.`);
+                return false;
+            }
+        }
     }
 
+    function init() {
+        // Start the WASM loading process with retry mechanism
+        loadWasm().then(success => {
+            if (!success) {
+                console.error("Could not initialize the application. Please check your connection and reload the page.");
+            }
+        });
+    }
+
+    // Start the initialization process
     init();
 </script>
 </body>

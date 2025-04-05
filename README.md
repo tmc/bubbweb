@@ -4,15 +4,14 @@
   <img src="./.github/screenshot.png" alt="Screenshot of the example" />
 </p>
 
-This is a writeup on which changes to bubbletea are needed to make it work in WASM aka ``GOOS=js GOARCH=wasm go build -o main.wasm`` and how to use it in the browser. ``main.go`` contains a working example with the bubbletea split-editor example.
+Run [Bubbletea](https://github.com/charmbracelet/bubbletea) TUI applications in WebAssembly. `main.go` contains a working example with the bubbletea split-editor example.
 
-## Compile Problems 
+## Compilation Issues
 
 ### 1. `github.com/atotto/clipboard`
 
-As clipboard doesn't have function stubs for javascript it will fail to compile. This could simply solved by clipboard providing empty implementation for javascript. A simple solution would be to add a file `clipboard_js.go` with the following content:
+Clipboard doesn't have function stubs for JavaScript. Add a file `clipboard_js.go`:
 
-**clipboard_js.go**
 ```go
 //go:build js
 // +build js
@@ -30,28 +29,36 @@ func readAll() (string, error) {
 func writeAll(text string) error {
 	return errors.New("not implemented")
 }
-
 ```
 
-In this POC I solved this by the following replace in the `go.mod` to redirect the import to a local copy of clipboard which has the file.
+Solution:
+<details>
+<summary>Add a replace directive in <code>go.mod</code> to use a version with JavaScript support</summary>
 
+```go
+// Use a forked version of clipboard with JavaScript support
+replace github.com/atotto/clipboard => github.com/your-username/clipboard v0.0.0-fork
 ```
-replace github.com/atotto/clipboard => ./_vendor/clipboard
-```
+</details>
 
-- Getting this PR into clipboard would also solve the problem: https://github.com/atotto/clipboard/pull/48
+> 💡 Alternative: Use PR from https://github.com/atotto/clipboard/pull/48
 
 ### 2. `github.com/containerd/console`
 
-The version of this package that bubbletea uses will not compile because again it doesn't have function stubs for javascript. This can be solved by using a newer version of the package. In this POC I solved this by the following replace in the `go.mod` to use the current head of the master branch.
+The version bubbletea uses lacks JavaScript stubs. Use a newer version:
 
-```
+<details>
+<summary>Add a replace directive in <code>go.mod</code> to use a newer version</summary>
+
+```go
+// Use a newer version of console with JavaScript support
 replace github.com/containerd/console => github.com/containerd/console v1.0.4-0.20230706203907-8f6c4e4faef5
 ```
+</details>
 
-### 3. Bubbletea itself
+### 3. Bubbletea JavaScript implementations
 
-We need to provide javascript empty implementations for tty and signals. This can be done by adding the following files:
+Add JavaScript implementations for TTY and signals:
 
 **tty_js.go**
 ```go
@@ -91,202 +98,51 @@ func (p *Program) listenForResize(done chan struct{}) {
 }
 ```
 
-In this POC I solved this by the following replace in the `go.mod` to redirect the import to a local copy of bubbletea which has the file.
-
-```
-replace github.com/charmbracelet/bubbletea => ./_vendor/bubbletea
-```
-
-## Runtime Problems
-
-Now that the code compiles we can run it but in the browser we don't have a terminal. So we need to provide one and redirect all the input / outputs. I used [xterm.js](https://xtermjs.org/) as terminal in the browser.
-
-### 1. Redirecting input and exposing JS functions
+Solution:
+<details>
+<summary>Add a replace directive in <code>go.mod</code> to use a version with JavaScript support</summary>
 
 ```go
-package main
-
-import (
-	"bytes"
-	"fmt"
-	tea "github.com/charmbracelet/bubbletea"
-	"os"
-	"syscall/js"
-	"time"
-)
-
-type MinReadBuffer struct {
-	buf *bytes.Buffer
-}
-
-// For some reason bubbletea doesn't like a Reader that will return 0 bytes instead of blocking,
-// so we use this hacky workaround for now. As javascript is single threaded this should be fine
-// with regard to concurrency.
-func (b *MinReadBuffer) Read(p []byte) (n int, err error) {
-	for b.buf.Len() == 0 {
-		time.Sleep(100 * time.Millisecond)
-	}
-	return b.buf.Read(p)
-}
-
-func (b *MinReadBuffer) Write(p []byte) (n int, err error) {
-	return b.buf.Write(p)
-}
-
-// Creates the bubbletea program and registers the necessary functions in javascript
-func createTeaForJS(model tea.Model, option ...tea.ProgramOption) *tea.Program {
-	// Create buffers for input and output
-	fromJs := &MinReadBuffer{buf: bytes.NewBuffer(nil)}
-	fromGo := bytes.NewBuffer(nil)
-
-	prog := tea.NewProgram(model, append([]tea.ProgramOption{tea.WithInput(fromJs), tea.WithOutput(fromGo)}, option...)...)
-
-	// Register write function in WASM
-	js.Global().Set("bubbletea_write", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		fromJs.Write([]byte(args[0].String()))
-		fmt.Println("Wrote to Go:", args[0].String())
-		return nil
-	}))
-
-	// Register read function in WASM
-	js.Global().Set("bubbletea_read", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		b := make([]byte, fromGo.Len())
-		_, _ = fromGo.Read(b)
-		fromGo.Reset()
-		if len(b) > 0 {
-			fmt.Println("Read from Go:", string(b))
-		}
-		return string(b)
-	}))
-
-	// Register resize function in WASM
-	js.Global().Set("bubbletea_resize", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		width := args[0].Int()
-		height := args[1].Int()
-		prog.Send(tea.WindowSizeMsg{Width: width, Height: height})
-		return nil
-	}))
-
-	return prog
-}
-
-func main() {
-	// Init with some Model
-	prog := createTeaForJS(newModel(), tea.WithAltScreen())
-
-	fmt.Println("Starting program...")
-	if _, err := prog.Run(); err != nil {
-		fmt.Println("Error while running program:", err)
-		os.Exit(1)
-	}
-}
-
+// Use a forked version of bubbletea with JavaScript support
+replace github.com/charmbracelet/bubbletea => github.com/your-username/bubbletea v0.0.0-fork
 ```
+</details>
 
-### 2. Rendering the terminal
+## Integration with Browser
 
-```html
-<html>
-<head>
-    <meta charset="utf-8">
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" rel="stylesheet">
-    <script src="example/wasm_exec.js"></script>
-    <style>
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-        }
+Use [xterm.js](https://xtermjs.org/) as terminal in the browser. The implementation redirects input/output and provides JavaScript functions for communication.
 
-        .terminal-container {
-            /* this is important */
-            overflow: hidden;
-        }
+See `main.go` for details on:
+- Setting up buffers for I/O
+- Exposing JavaScript functions for input/output/resize
+- Creating a Bubbletea program with custom I/O
 
-        .xterm .xterm-viewport {
-            /* see : https://github.com/xtermjs/xterm.js/issues/3564#issuecomment-1004417440 */
-            width: initial !important;
-        }
-    </style>
-</head>
-<body>
-    <div class="terminal-container" style="height: 100%; width: 100%;">
-        <div id="terminal" style="height: 100%"></div>
-    </div>
-<script>
-    function initTerminal() {
-        // Check if bubbletea is initialized
-        if (globalThis.bubbletea_resize === undefined || globalThis.bubbletea_read === undefined || globalThis.bubbletea_write === undefined) {
-            setTimeout(() => {
-                console.log("waiting for bubbletea");
-                initTerminal();
-            }, 500);
-            return;
-        }
-        
-        const term = new Terminal();
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        term.open(document.getElementById('terminal'));
-
-        // Register terminal resize
-        fitAddon.fit();
-        window.addEventListener('resize', () => (fitAddon.fit()));
-        
-        // Focus terminal
-        term.focus();
-
-        // Initial resize
-        bubbletea_resize(term.cols, term.rows)
-
-        // Read from bubbletea and write to xterm
-        setInterval(() => {
-            const read = bubbletea_read();
-            if (read && read.length > 0) {
-                term.write(read);
-            }
-        }, 100);
-
-        // Resize on terminal resize
-        term.onResize((size) => (bubbletea_resize(term.cols, term.rows)));
-
-        // Write xterm output to bubbletea
-        term.onData((data) => (bubbletea_write(data)));
-    }
-
-    function init() {
-        const go = new Go();
-        WebAssembly.instantiateStreaming(fetch("./bubbletea.wasm"), go.importObject).then((result) => {
-            // Run wasm
-            go.run(result.instance).then(() => {
-                console.log("wasm finished");
-            });
-
-            // Init terminal
-            initTerminal();
-        })
-    }
-
-    init();
-</script>
-</body>
-</html>
-```
+See `example/index.html` for details on:
+- Setting up xterm.js
+- Communicating with the WASM module
+- Handling resize events
 
 ## Building
 
-Now that everything is in place we can build the WASM file. I use the following commands to build the WASM file:
-
 ```shell
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./example/wasm_exec.js # Optional as this is already in the example folder
-GOOS=js GOARCH=wasm go build -o example/bubbletea.wasm .
-```
+# Build everything with go generate
+go generate
 
-After that we can start a webserver in the example folder and open the `index.html` in the browser. In case you have python3 installed you can use the following commands to quickly spin up a webserver:
-
-```shell
+# For local testing
 cd example
-python3 -m http.server
+go run github.com/tmc/serve@latest
 ```
+
+Then open http://localhost:8000 in your browser.
+
+## Deployment
+
+This project can be easily deployed on GitHub Pages:
+
+1. Push the `example` directory to your GitHub repository
+2. Go to repository Settings → Pages
+3. Set the source to the branch containing your `example` directory
+4. Configure the root directory to `/` or `/example` depending on your repository structure
+5. Save the settings and GitHub Pages will deploy your application
+
+Your Bubbletea WASM application will be available at `https://[username].github.io/[repository]` or `https://[username].github.io/[repository]/example`.
