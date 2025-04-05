@@ -4,7 +4,7 @@
   <img src="./.github/screenshot.png" alt="Screenshot of the example" />
 </p>
 
-This is a writeup on which changes to bubbletea are needed to make it work in WASM aka ``GOOS=js GOARCH=wasm go build`` and how to use it in the browser. ``main.go`` contains a working example with the bubbletea split-editor example.
+This is a writeup on which changes to bubbletea are needed to make it work in WASM aka ``GOOS=js GOARCH=wasm go build -o main.wasm`` and how to use it in the browser. ``main.go`` contains a working example with the bubbletea split-editor example.
 
 ## Compile Problems 
 
@@ -280,7 +280,7 @@ func main() {
 Now that everything is in place we can build the WASM file. I use the following commands to build the WASM file:
 
 ```shell
-cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" ./example/wasm_exec.js # Optional as this is already in the example folder
+cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./example/wasm_exec.js # Optional as this is already in the example folder
 GOOS=js GOARCH=wasm go build -o example/bubbletea.wasm .
 ```
 
