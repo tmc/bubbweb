@@ -6,6 +6,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit"></script>
     <link href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.min.css" rel="stylesheet">
     <script src="wasm_exec.js"></script>
+    <!-- Add Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         html, body {
             height: 100%;
@@ -14,144 +16,206 @@
             background-color: black;
         }
         .terminal-container {
-            /* this is important */
             overflow: hidden;
             background-color: black;
         }
     </style>
 </head>
-<body>
-<div class="terminal-container" style="height: 100%; width: 100%;">
-    <div id="terminal" style="height: 100%"></div>
-</div>
-<script>
-    // Store the last known ETag
-    let lastETag = localStorage.getItem('wasmETag') || '';
+<body class="bg-black">
+    <div class="terminal-container h-full w-full">
+        <div id="terminal" class="h-full"></div>
+    </div>
 
-    function initTerminal() {
-        // Check if bubbletea is initialized
-        if (globalThis.bubbletea_resize === undefined || globalThis.bubbletea_read === undefined || globalThis.bubbletea_write === undefined) {
-            setTimeout(() => {
-                console.log("waiting for bubbletea");
-                initTerminal();
-            }, 500);
-            return;
+    <!-- Update notification using Tailwind classes -->
+    <div id="update-notification" 
+         class="fixed bottom-5 right-5 bg-black bg-opacity-80 text-green-400 border border-green-400 rounded px-4 py-2 font-mono text-sm z-50 opacity-0 transform translate-y-5 transition-all duration-300 cursor-pointer shadow-lg shadow-green-400/30 hover:bg-black hover:shadow-green-400/50"
+         onclick="window.location.reload()">
+        New version available. Click to update.
+    </div>
+
+    <script>
+        // Store the last known ETag
+        let lastETag = localStorage.getItem('wasmETag') || '';
+        let updateCheckInterval = null;
+        let updateAvailable = false;
+
+        function initTerminal() {
+            // Check if bubbletea is initialized
+            if (globalThis.bubbletea_resize === undefined || globalThis.bubbletea_read === undefined || globalThis.bubbletea_write === undefined) {
+                setTimeout(() => {
+                    console.log("waiting for bubbletea");
+                    initTerminal();
+                }, 500);
+                return;
+            }
+
+            const term = new Terminal();
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById('terminal'));
+
+            // Register terminal resize
+            fitAddon.fit();
+            window.addEventListener('resize', () => (fitAddon.fit()));
+
+            // Focus terminal
+            term.focus();
+
+            // Initial resize
+            bubbletea_resize(term.cols, term.rows)
+
+            // Read from bubbletea and write to xterm
+            setInterval(() => {
+                const read = bubbletea_read();
+                if (read && read.length > 0) {
+                    term.write(read);
+                }
+            }, 100);
+
+            // Resize on terminal resize
+            term.onResize((size) => (bubbletea_resize(size.cols, size.rows)));
+
+            // Write xterm output to bubbletea
+            term.onData((data) => (bubbletea_write(data)));
+            
+            // Start background update check after terminal is initialized
+            startUpdateCheck();
         }
 
-        const term = new Terminal();
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        term.open(document.getElementById('terminal'));
-
-        // Register terminal resize
-        fitAddon.fit();
-        window.addEventListener('resize', () => (fitAddon.fit()));
-
-        // Focus terminal
-        term.focus();
-
-        // Initial resize
-        bubbletea_resize(term.cols, term.rows)
-
-        // Read from bubbletea and write to xterm
-        setInterval(() => {
-            const read = bubbletea_read();
-            if (read && read.length > 0) {
-                term.write(read);
-            }
-        }, 100);
-
-        // Resize on terminal resize
-        term.onResize((size) => (bubbletea_resize(size.cols, size.rows)));
-
-        // Write xterm output to bubbletea
-        term.onData((data) => (bubbletea_write(data)));
-    }
-
-    async function loadWasm(retryCount = 0) {
-        const maxRetries = 10;
-        const baseDelay = 1000; // Start with 1 second delay
-        
-        try {
-            console.log(`Attempting to load WASM (attempt ${retryCount + 1})`);
+        // Function to check for updates in the background
+        async function checkForUpdates() {
+            if (!lastETag || updateAvailable) return;
             
-            // Create headers object with ETag if we have one
-            const headers = new Headers();
-            if (lastETag) {
+            try {
+                // Create headers object with ETag
+                const headers = new Headers();
                 headers.append('If-None-Match', lastETag);
-                console.log(`Using ETag: ${lastETag}`);
-            }
-            
-            // Fetch the WASM file with ETag headers
-            const response = await fetch("./bubbletea.wasm", { headers });
-            
-            // Store the new ETag if present
-            const newETag = response.headers.get('ETag');
-            if (newETag) {
-                console.log(`Received new ETag: ${newETag}`);
-                lastETag = newETag;
-                localStorage.setItem('wasmETag', newETag);
-            }
-            
-            // If we got a 304 Not Modified, we can use the cached version
-            if (response.status === 304) {
-                console.log('WASM file not modified, using cached version');
-                // We need to fetch again without the If-None-Match header to get the actual content
-                const cachedResponse = await fetch("./bubbletea.wasm");
-                const go = new Go();
-                const result = await WebAssembly.instantiateStreaming(cachedResponse, go.importObject);
-                go.run(result.instance).then(() => {
-                    console.log("wasm finished (cached)");
-                });
-                initTerminal();
-                return true;
-            }
-            
-            // Otherwise, process the new WASM file
-            const go = new Go();
-            const result = await WebAssembly.instantiateStreaming(response, go.importObject);
-            
-            // Run wasm
-            go.run(result.instance).then(() => {
-                console.log("wasm finished");
-            });
-
-            // Init terminal
-            initTerminal();
-            
-            return true;
-        } catch (error) {
-            console.error(`Failed to load WASM (attempt ${retryCount + 1}):`, error);
-            
-            if (retryCount < maxRetries) {
-                // Calculate exponential backoff delay with jitter
-                const delay = baseDelay * Math.pow(1.5, retryCount) * (0.9 + Math.random() * 0.2);
-                console.log(`Retrying in ${Math.round(delay / 1000)} seconds...`);
                 
-                // Wait and retry
-                return new Promise(resolve => {
-                    setTimeout(() => {
-                        resolve(loadWasm(retryCount + 1));
-                    }, delay);
+                // Make a HEAD request to check if the WASM file has been updated
+                const response = await fetch("./bubbletea.wasm", { 
+                    method: 'HEAD',
+                    headers: headers,
+                    cache: 'no-cache'
                 });
-            } else {
-                console.error(`Failed to load WASM after ${maxRetries} attempts. Giving up.`);
-                return false;
+                
+                // If we get a 200 response (not 304 Not Modified), there's a new version
+                if (response.status === 200) {
+                    const newETag = response.headers.get('ETag');
+                    if (newETag && newETag !== lastETag) {
+                        console.log(`New version detected. Current ETag: ${lastETag}, New ETag: ${newETag}`);
+                        showUpdateNotification();
+                        updateAvailable = true;
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking for updates:', error);
             }
         }
-    }
+        
+        // Function to start periodic update checks
+        function startUpdateCheck() {
+            // Check for updates every 5 minutes
+            updateCheckInterval = setInterval(checkForUpdates, 300000);
+            
+            // Also check once after 10 seconds
+            setTimeout(checkForUpdates, 10000);
+        }
+        
+        // Function to show the update notification
+        function showUpdateNotification() {
+            const notification = document.getElementById('update-notification');
+            notification.classList.remove('opacity-0', 'translate-y-5');
+            notification.classList.add('opacity-100', 'translate-y-0');
+            
+            // Add a subtle pulse animation
+            let pulseCount = 0;
+            const pulseInterval = setInterval(() => {
+                if (pulseCount >= 3) {
+                    clearInterval(pulseInterval);
+                    return;
+                }
+                
+                notification.classList.add('shadow-green-400/70');
+                setTimeout(() => {
+                    notification.classList.remove('shadow-green-400/70');
+                }, 500);
+                
+                pulseCount++;
+            }, 3000);
+        }
 
-    function init() {
-        // Start the WASM loading process with retry mechanism
-        loadWasm().then(success => {
-            if (!success) {
-                console.error("Could not initialize the application. Please check your connection and reload the page.");
+        async function loadWasm(retryCount = 0) {
+            const maxRetries = 10;
+            const baseDelay = 1000;
+            
+            try {
+                console.log(`Attempting to load WASM (attempt ${retryCount + 1})`);
+                
+                const headers = new Headers();
+                if (lastETag) {
+                    headers.append('If-None-Match', lastETag);
+                    console.log(`Using ETag: ${lastETag}`);
+                }
+                
+                const response = await fetch("./bubbletea.wasm", { headers });
+                
+                const newETag = response.headers.get('ETag');
+                if (newETag) {
+                    console.log(`Received new ETag: ${newETag}`);
+                    lastETag = newETag;
+                    localStorage.setItem('wasmETag', newETag);
+                }
+                
+                if (response.status === 304) {
+                    console.log('WASM file not modified, using cached version');
+                    const cachedResponse = await fetch("./bubbletea.wasm");
+                    const go = new Go();
+                    const result = await WebAssembly.instantiateStreaming(cachedResponse, go.importObject);
+                    go.run(result.instance).then(() => {
+                        console.log("wasm finished (cached)");
+                    });
+                    initTerminal();
+                    return true;
+                }
+                
+                const go = new Go();
+                const result = await WebAssembly.instantiateStreaming(response, go.importObject);
+                
+                go.run(result.instance).then(() => {
+                    console.log("wasm finished");
+                });
+
+                initTerminal();
+                
+                return true;
+            } catch (error) {
+                console.error(`Failed to load WASM (attempt ${retryCount + 1}):`, error);
+                
+                if (retryCount < maxRetries) {
+                    const delay = baseDelay * Math.pow(1.5, retryCount) * (0.9 + Math.random() * 0.2);
+                    console.log(`Retrying in ${Math.round(delay / 1000)} seconds...`);
+                    
+                    return new Promise(resolve => {
+                        setTimeout(() => {
+                            resolve(loadWasm(retryCount + 1));
+                        }, delay);
+                    });
+                } else {
+                    console.error(`Failed to load WASM after ${maxRetries} attempts. Giving up.`);
+                    return false;
+                }
             }
-        });
-    }
+        }
 
-    // Start the initialization process
-    init();
-</script>
+        function init() {
+            loadWasm().then(success => {
+                if (!success) {
+                    console.error("Could not initialize the application. Please check your connection and reload the page.");
+                }
+            });
+        }
+
+        init();
+    </script>
 </body>
 </html>
