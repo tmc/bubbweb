@@ -1,3 +1,6 @@
+//go:build js
+// +build js
+
 package bubbweb
 
 import (
@@ -41,6 +44,7 @@ func NewProgram(model tea.Model, options ...tea.ProgramOption) *Program {
 	defaultOptions := []tea.ProgramOption{
 		tea.WithInput(fromJs),
 		tea.WithOutput(fromGo),
+		tea.WithMouseCellMotion(),
 	}
 	allOptions := append(defaultOptions, options...)
 
@@ -49,7 +53,6 @@ func NewProgram(model tea.Model, options ...tea.ProgramOption) *Program {
 	// Register write function in WASM
 	js.Global().Set("bubbletea_write", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		fromJs.Write([]byte(args[0].String()))
-		fmt.Println("Wrote to Go:", args[0].String())
 		return nil
 	}))
 
@@ -66,6 +69,42 @@ func NewProgram(model tea.Model, options ...tea.ProgramOption) *Program {
 		width := args[0].Int()
 		height := args[1].Int()
 		prog.Send(tea.WindowSizeMsg{Width: width, Height: height})
+		return nil
+	}))
+
+	// Register mouse event function in WASM
+	js.Global().Set("bubbletea_mouse", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		if len(args) < 7 {
+			fmt.Println("Invalid mouse event arguments")
+			return nil
+		}
+
+		eventType := tea.MouseAction(args[0].Int())
+		button := tea.MouseButton(args[1].Int())
+		x := args[2].Int()
+		y := args[3].Int()
+		alt := args[4].Bool()
+		ctrl := args[5].Bool()
+		shift := args[6].Bool()
+
+		if len(args) > 5 {
+			ctrl = args[5].Bool()
+		}
+		if len(args) > 6 {
+			shift = args[6].Bool()
+		}
+
+		msg := tea.MouseMsg{
+			Action: eventType,
+			Button: button,
+			X:      x,
+			Y:      y,
+			Alt:    alt,
+			Ctrl:   ctrl,
+			Shift:  shift,
+		}
+		prog.Send(msg)
+
 		return nil
 	}))
 

@@ -17,6 +17,7 @@ Check out the [live demo](https://tmc.github.io/bubbweb/example/) to see BubbWeb
 - Run Bubbletea TUIs directly in the browser
 - Uses xterm.js for terminal emulation
 - Handles input/output between JavaScript and Go
+- Full mouse support (clicks, movement, wheel scrolling)
 - Manages terminal resize events
 - Includes ETag-based caching for efficient updates
 
@@ -83,7 +84,30 @@ BubbWeb handles several challenges of running Bubbletea in WebAssembly:
    - `bubbletea_write`: Sends input from JavaScript to the Go program
    - `bubbletea_read`: Reads output from the Go program
    - `bubbletea_resize`: Sends terminal resize events to the Go program
-3. Uses replacements for packages that don't fully support WebAssembly
+   - `bubbletea_mouse`: Sends mouse events to the Go program
+3. Enables full mouse support with standard BubbleTea event handling
+4. Uses replacements for packages that don't fully support WebAssembly
+
+### Mouse Support
+
+Mouse events are translated from browser events to BubbleTea's mouse event system:
+
+```go
+case tea.MouseMsg:
+    switch msg.Type {
+    case tea.MousePress:
+        // Handle mouse press at (msg.X, msg.Y)
+    case tea.MouseRelease:
+        // Handle mouse release
+    case tea.MouseMotion:
+        // Handle mouse movement
+    case tea.MouseWheelUp, tea.MouseWheelDown:
+        // Handle scrolling
+    }
+}
+```
+
+The coordinates are automatically converted from pixel coordinates to terminal cell coordinates.
 
 ## License
 
