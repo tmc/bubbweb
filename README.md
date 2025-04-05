@@ -1,128 +1,46 @@
-# Bubbletea in WASM
+# bubbweb
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/tmc/bubbweb.svg)](https://pkg.go.dev/github.com/tmc/bubbweb)
+
+BubbWeb is a library for running [Bubbletea](https://github.com/charmbracelet/bubbletea) terminal user interfaces in WebAssembly.
+
+## Live Demo
+
+Check out the [live demo](https://tmc.github.io/bubbweb/example/) to see BubbWeb in action.
 
 <p align="center">
   <img src="./.github/screenshot.png" alt="Screenshot of the example" />
 </p>
 
-Run [Bubbletea](https://github.com/charmbracelet/bubbletea) TUI applications in WebAssembly. `main.go` contains a working example with the bubbletea split-editor example.
+## Features
 
-## Compilation Issues
+- Run Bubbletea TUIs directly in the browser
+- Uses xterm.js for terminal emulation
+- Handles input/output between JavaScript and Go
+- Manages terminal resize events
+- Includes ETag-based caching for efficient updates
 
-### 1. `github.com/atotto/clipboard`
-
-Clipboard doesn't have function stubs for JavaScript. Add a file `clipboard_js.go`:
+## Usage
 
 ```go
-//go:build js
-// +build js
-
-package clipboard
-
 import (
-	"errors"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/tmc/bubbweb"
 )
 
-func readAll() (string, error) {
-	return "", errors.New("not implemented")
-}
+func main() {
+    // Create your BubbleTea model as usual
+    model := yourModel()
 
-func writeAll(text string) error {
-	return errors.New("not implemented")
-}
-```
-
-Solution:
-<details>
-<summary>Add a replace directive in <code>go.mod</code> to use a version with JavaScript support</summary>
-
-```go
-// Use a forked version of clipboard with JavaScript support
-replace github.com/atotto/clipboard => github.com/your-username/clipboard v0.0.0-fork
-```
-</details>
-
-> 💡 Alternative: Use PR from https://github.com/atotto/clipboard/pull/48
-
-### 2. `github.com/containerd/console`
-
-The version bubbletea uses lacks JavaScript stubs. Use a newer version:
-
-<details>
-<summary>Add a replace directive in <code>go.mod</code> to use a newer version</summary>
-
-```go
-// Use a newer version of console with JavaScript support
-replace github.com/containerd/console => github.com/containerd/console v1.0.4-0.20230706203907-8f6c4e4faef5
-```
-</details>
-
-### 3. Bubbletea JavaScript implementations
-
-Add JavaScript implementations for TTY and signals:
-
-**tty_js.go**
-```go
-//go:build js
-// +build js
-
-package tea
-
-import (
-	"errors"
-	"os"
-)
-
-func (p *Program) initInput() error {
-	return nil
-}
-
-func (p *Program) restoreInput() error {
-	return nil
-}
-
-func openInputTTY() (*os.File, error) {
-	return nil, errors.New("unavailable in js")
+    // Use bubbweb to run the program in WebAssembly
+    prog := bubbweb.NewProgram(model, tea.WithAltScreen())
+    if _, err := prog.Run(); err != nil {
+        // Handle error
+    }
 }
 ```
 
-**signals_js.go**
-```go
-//go:build js
-// +build js
-
-package tea
-
-// listenForResize is a no-op on the web.
-func (p *Program) listenForResize(done chan struct{}) {
-	close(done)
-}
-```
-
-Solution:
-<details>
-<summary>Add a replace directive in <code>go.mod</code> to use a version with JavaScript support</summary>
-
-```go
-// Use a forked version of bubbletea with JavaScript support
-replace github.com/charmbracelet/bubbletea => github.com/your-username/bubbletea v0.0.0-fork
-```
-</details>
-
-## Integration with Browser
-
-Use [xterm.js](https://xtermjs.org/) as terminal in the browser. The implementation redirects input/output and provides JavaScript functions for communication.
-
-See `main.go` for details on:
-- Setting up buffers for I/O
-- Exposing JavaScript functions for input/output/resize
-- Creating a Bubbletea program with custom I/O
-
-See `example/index.html` for details on:
-- Setting up xterm.js
-- Communicating with the WASM module
-- Handling resize events
-
-## Building
+## Building a WebAssembly Application
 
 ```shell
 # Build everything with go generate
@@ -130,10 +48,19 @@ go generate
 
 # For local testing with auto-reload
 cd example
-go run github.com/cosmtrek/air@latest -c ../.air.toml # or any live reload server that supports SSE
+go run github.com/tmc/serve@latest # or any other HTTP server
 ```
 
-Then open http://localhost:8000 in your browser.
+Then open http://localhost:8080 in your browser.
+
+## Example
+
+See the `example` directory for a complete example including:
+
+- A multi-pane text editor built with Bubbletea
+- HTML/JavaScript integration with xterm.js
+- Update notification system
+- ETag-based caching for efficient updates
 
 ## Deployment
 
@@ -145,4 +72,19 @@ This project can be easily deployed on GitHub Pages:
 4. Configure the root directory to `/` or `/example` depending on your repository structure
 5. Save the settings and GitHub Pages will deploy your application
 
-Your Bubbletea WASM application will be available at `https://[username].github.io/[repository]` or `https://[username].github.io/[repository]/example`.
+Your Bubbletea WebAssembly application will be available at `https://[username].github.io/[repository]/example`
+
+## Implementation Notes
+
+BubbWeb handles several challenges of running Bubbletea in WebAssembly:
+
+1. Provides custom I/O implementation for WebAssembly
+2. Exposes JavaScript functions for browser communication:
+   - `bubbletea_write`: Sends input from JavaScript to the Go program
+   - `bubbletea_read`: Reads output from the Go program
+   - `bubbletea_resize`: Sends terminal resize events to the Go program
+3. Uses replacements for packages that don't fully support WebAssembly
+
+## License
+
+MIT

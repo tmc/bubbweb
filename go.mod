@@ -1,4 +1,4 @@
-module bblwasm
+module github.com/tmc/bubbweb
 
 go 1.24.2
 
