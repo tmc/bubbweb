@@ -13,16 +13,10 @@
             padding: 0;
             background-color: black;
         }
-
         .terminal-container {
             /* this is important */
             overflow: hidden;
             background-color: black;
-        }
-
-        .xterm .xterm-viewport {
-            /* see : https://github.com/xtermjs/xterm.js/issues/3564#issuecomment-1004417440 */
-            width: initial !important;
         }
     </style>
 </head>
@@ -31,6 +25,9 @@
     <div id="terminal" style="height: 100%"></div>
 </div>
 <script>
+    // Store the last known ETag
+    let lastETag = localStorage.getItem('wasmETag') || '';
+
     function initTerminal() {
         // Check if bubbletea is initialized
         if (globalThis.bubbletea_resize === undefined || globalThis.bubbletea_read === undefined || globalThis.bubbletea_write === undefined) {
@@ -77,8 +74,42 @@
         
         try {
             console.log(`Attempting to load WASM (attempt ${retryCount + 1})`);
+            
+            // Create headers object with ETag if we have one
+            const headers = new Headers();
+            if (lastETag) {
+                headers.append('If-None-Match', lastETag);
+                console.log(`Using ETag: ${lastETag}`);
+            }
+            
+            // Fetch the WASM file with ETag headers
+            const response = await fetch("./bubbletea.wasm", { headers });
+            
+            // Store the new ETag if present
+            const newETag = response.headers.get('ETag');
+            if (newETag) {
+                console.log(`Received new ETag: ${newETag}`);
+                lastETag = newETag;
+                localStorage.setItem('wasmETag', newETag);
+            }
+            
+            // If we got a 304 Not Modified, we can use the cached version
+            if (response.status === 304) {
+                console.log('WASM file not modified, using cached version');
+                // We need to fetch again without the If-None-Match header to get the actual content
+                const cachedResponse = await fetch("./bubbletea.wasm");
+                const go = new Go();
+                const result = await WebAssembly.instantiateStreaming(cachedResponse, go.importObject);
+                go.run(result.instance).then(() => {
+                    console.log("wasm finished (cached)");
+                });
+                initTerminal();
+                return true;
+            }
+            
+            // Otherwise, process the new WASM file
             const go = new Go();
-            const result = await WebAssembly.instantiateStreaming(fetch("./bubbletea.wasm"), go.importObject);
+            const result = await WebAssembly.instantiateStreaming(response, go.importObject);
             
             // Run wasm
             go.run(result.instance).then(() => {

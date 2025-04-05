@@ -128,9 +128,9 @@ See `example/index.html` for details on:
 # Build everything with go generate
 go generate
 
-# For local testing
+# For local testing with auto-reload
 cd example
-go run github.com/tmc/serve@latest
+go run github.com/cosmtrek/air@latest -c ../.air.toml # or any live reload server that supports SSE
 ```
 
 Then open http://localhost:8000 in your browser.
