@@ -30,12 +30,25 @@ var (
 	focusedPlaceholderColor   = lipgloss.AdaptiveColor{Light: "#8787ff", Dark: "#afbfff"} // Blue - brighter in dark mode
 	borderColor               = lipgloss.AdaptiveColor{Light: "#a8a8a8", Dark: "#787878"} // Medium Gray - increased contrast
 
+	// Hover effect colors
+	hoveredLineBackgroundColor = lipgloss.AdaptiveColor{Light: "#e0e8ff", Dark: "#2d2d5f"} // Light blue / Dark blue-purple
+	hoveredCharColor           = lipgloss.AdaptiveColor{Light: "#0000ff", Dark: "#8888ff"} // Blue for hovered character
+
 	// Apply the adaptive colors to styles
 	cursorStyle = lipgloss.NewStyle().Foreground(cursorColor)
 
 	cursorLineStyle = lipgloss.NewStyle().
 			Background(cursorLineBackgroundColor).
 			Foreground(cursorLineForegroundColor)
+
+	// Hover styles - just background color for the line (no italic to keep it clean)
+	hoveredLineStyle = lipgloss.NewStyle().
+				Background(hoveredLineBackgroundColor)
+
+	// Bold style for the hovered character in status line
+	hoveredCharStyle = lipgloss.NewStyle().
+				Foreground(hoveredCharColor).
+				Bold(true)
 
 	placeholderStyle = lipgloss.NewStyle().
 				Foreground(placeholderColor)
@@ -87,12 +100,18 @@ type model struct {
 	focus         int
 	mousePosition string // Store last mouse position for display
 	mouseEvent    string // Store last mouse event type
+	hoveredLine   int    // Track which line the mouse is hovering over
+	hoveredChar   int    // Track which character the mouse is hovering over
+	hoveredEditor int    // Track which editor the mouse is hovering over
 }
 
 func newModel() model {
 	m := model{
-		inputs: make([]textarea.Model, initialInputs),
-		help:   help.New(),
+		inputs:        make([]textarea.Model, initialInputs),
+		help:          help.New(),
+		hoveredLine:   -1, // Initialize to -1 to indicate no line is hovered
+		hoveredChar:   -1, // Initialize to -1 to indicate no character is hovered
+		hoveredEditor: -1, // Initialize to -1 to indicate no editor is hovered
 		keymap: keymap{
 			next: key.NewBinding(
 				key.WithKeys("tab"),
@@ -175,6 +194,60 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mousePosition = fmt.Sprintf("(%d,%d)", msg.X, msg.Y)
 		m.mouseEvent = fmt.Sprint(msg)
 
+		// Track hover state for highlighting
+		if len(m.inputs) > 0 {
+			editorWidth := m.width / len(m.inputs)
+			hoveredEditor := msg.X / editorWidth
+
+			// Reset hover state first
+			m.hoveredEditor = -1
+			m.hoveredLine = -1
+			m.hoveredChar = -1
+
+			// Update hovered editor if valid
+			if hoveredEditor >= 0 && hoveredEditor < len(m.inputs) {
+				m.hoveredEditor = hoveredEditor
+
+				// Get relative position within the editor
+				relativeX := msg.X % editorWidth
+
+				// Get the editor content
+				ta := m.inputs[hoveredEditor]
+				value := ta.Value()
+
+				if value != "" {
+					// Get current view information
+					info := ta.LineInfo()
+					rows := strings.Split(value, "\n")
+
+					// Account for top bar (1 line) and editor borders (1 line)
+					topBarOffset := 1 // The title bar at the top
+					borderOffset := 1 // The top border of the textarea
+
+					// Calculate which line is hovered, accounting for offsets
+					hoveredLine := msg.Y - (topBarOffset + borderOffset) + info.RowOffset
+
+					// Bounds checking for line
+					if hoveredLine >= 0 && hoveredLine < len(rows) {
+						m.hoveredLine = hoveredLine
+
+						// For character position we need to account for line numbers if shown
+						lineNumberOffset := 0
+						if ta.ShowLineNumbers {
+							// Approximate offset for line numbers (varies with number size)
+							lineNumberOffset = 4 // line number + space + vertical bar + space
+						}
+
+						// Calculate character position, accounting for line number column if present
+						charPos := relativeX - lineNumberOffset
+						if charPos >= 0 && charPos < len(rows[hoveredLine]) {
+							m.hoveredChar = charPos
+						}
+					}
+				}
+			}
+		}
+
 		// Handle mouse clicks to change focus and set cursor position
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			// Determine which editor was clicked based on X position
@@ -194,12 +267,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Calculate the relative position within the editor
 				relativeX := msg.X % editorWidth
 
-				// Set cursor position based on clicked position
-				if m.inputs[m.focus].Value() != "" {
-					rows := strings.Split(m.inputs[m.focus].Value(), "\n")
+				// Handle cursor positioning based on click
+				ta := m.inputs[m.focus]
+				value := ta.Value()
 
-					// First, find which line was clicked
-					clickedLine := msg.Y
+				if value != "" {
+					// Get current view information
+					info := ta.LineInfo()
+					rows := strings.Split(value, "\n")
+
+					// Account for top bar and editor borders
+					topBarOffset := 1 // The title bar at the top
+					borderOffset := 1 // The top border of the textarea
+
+					// Consider scrolling and UI offsets
+					clickedLine := msg.Y - (topBarOffset + borderOffset) + info.RowOffset
+
+					// Bounds checking
 					if clickedLine >= len(rows) {
 						clickedLine = len(rows) - 1
 					}
@@ -207,22 +291,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						clickedLine = 0
 					}
 
-					// Calculate cursor position
-					// Get the position at the start of the clicked line
+					// Calculate cursor position at start of clicked line
 					cursorPos := 0
 					for i := 0; i < clickedLine; i++ {
 						cursorPos += len(rows[i]) + 1 // +1 for newline
 					}
 
-					// Add the horizontal position (constrained by line length)
+					// Account for line numbers if shown
+					lineNumberOffset := 0
+					if ta.ShowLineNumbers {
+						lineNumberOffset = 4 // Approximate width of line numbers
+					}
+
+					// Add horizontal position within the line
 					lineLength := len(rows[clickedLine])
-					charPos := relativeX / 1 // Assuming each character is ~1 cell wide
+					charPos := relativeX - lineNumberOffset
+					if charPos < 0 {
+						charPos = 0
+					}
 					if charPos > lineLength {
 						charPos = lineLength
 					}
 
 					cursorPos += charPos
-					m.inputs[m.focus].SetCursor(cursorPos)
+					ta.SetCursor(cursorPos)
 				}
 			}
 		}
@@ -239,6 +331,87 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// Custom rendering function to support highlighting hovered lines and characters
+func (m model) renderTextArea(ta textarea.Model, isHovered bool, hoveredLine, hoveredChar int) string {
+	// If not the hovered editor, just return the normal view
+	if !isHovered || hoveredLine < 0 {
+		return ta.View()
+	}
+
+	// For the hovered editor, we need to do custom rendering to highlight the hovered line/char
+	value := ta.Value()
+	if value == "" {
+		return ta.View()
+	}
+
+	// Get the default view first, which we'll modify to add highlighting
+	defaultView := ta.View()
+
+	// Split the view into lines
+	viewLines := strings.Split(defaultView, "\n")
+
+	// Get view information to account for scrolling
+	info := ta.LineInfo()
+	viewportStartLine := info.RowOffset
+
+	// The line in the rendered view will be different from the actual line number
+	// because of viewport scrolling and borders. Calculate the visual line in the rendered view.
+
+	// Get border information from the view structure
+	// By examining the view lines, we can determine where the content starts
+	// Usually the first line is the top border of the textarea
+	borderOffset := 1
+
+	// Look for the line that indicates content has begun (after top border)
+	for i, line := range viewLines {
+		if strings.Contains(line, "│") && i > 0 {
+			// We found the first content line
+			borderOffset = i
+			break
+		}
+	}
+
+	visualHoveredLine := hoveredLine - viewportStartLine + borderOffset
+
+	// Bounds check - make sure the line is visible
+	if visualHoveredLine < 0 || visualHoveredLine >= len(viewLines) {
+		return defaultView // Line not in viewport
+	}
+
+	// Get the line that needs highlighting
+	lineContent := viewLines[visualHoveredLine]
+
+	// For character highlighting, we need to determine if the character is visible in the view
+	// This is challenging with ANSI codes, but we can try a simple approach
+	if hoveredChar >= 0 {
+		// We need to get the actual text content of the row (without ANSI codes)
+		// Since we can't easily strip ANSI codes, we'll use a more direct approach:
+		// Go through the original text and get the row we need
+		contentLines := strings.Split(value, "\n")
+		if hoveredLine < len(contentLines) {
+			line := contentLines[hoveredLine]
+			if hoveredChar < len(line) {
+				// We know the character is in the content
+				// Apply background to the whole line
+				highlightedLine := hoveredLineStyle.Render(lineContent)
+				viewLines[visualHoveredLine] = highlightedLine
+			} else {
+				// Character is out of bounds, just highlight the line
+				viewLines[visualHoveredLine] = hoveredLineStyle.Render(lineContent)
+			}
+		} else {
+			// Line is out of bounds in the content, just highlight what we have
+			viewLines[visualHoveredLine] = hoveredLineStyle.Render(lineContent)
+		}
+	} else {
+		// No specific character, just highlight the entire line
+		viewLines[visualHoveredLine] = hoveredLineStyle.Render(lineContent)
+	}
+
+	// Rejoin the lines to create the complete view
+	return strings.Join(viewLines, "\n")
 }
 
 func (m *model) sizeInputs() {
@@ -261,7 +434,8 @@ func (m *model) sizeInputs() {
 
 		m.inputs[i].SetWidth(width)
 
-		heightAdjustment := helpHeight + 3 // Adjust for help and top bar
+		// Adjust editor height to account for title bar (always shown)
+		heightAdjustment := helpHeight + 1 // +1 for title bar
 
 		m.inputs[i].SetHeight(m.height - heightAdjustment)
 	}
@@ -276,16 +450,24 @@ func (m model) View() string {
 	var topBar string
 
 	// Create a top bar if we have a valid width
+	if m.width > 0 {
+		// Add top bar with title using adaptive colors
+		titleBarBgColor := lipgloss.AdaptiveColor{Light: "#5f5fd7", Dark: "#5f5f87"} // Purple/Dark Blue
+		titleBarFgColor := lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#e4e4e4"} // White
 
-	titleBar := lipgloss.NewStyle().
-		Height(1).
-		Width(m.width - 2).
-		Align(lipgloss.Center).
-		Border(lipgloss.RoundedBorder()).
-		Render("bubbweb - example editor with mouse support")
+		// Create a title bar that spans the full width with centered text
+		titleBar := lipgloss.NewStyle().
+			Background(titleBarBgColor).
+			Foreground(titleBarFgColor).
+			Bold(true).
+			Padding(0, 1).
+			Width(m.width). // Make the bar span the full terminal width
+			Align(lipgloss.Center).
+			Render("bubbweb - example editor")
 
-	// Set the top bar with a full-width title
-	topBar = titleBar
+		// Set the top bar with a full-width title
+		topBar = titleBar
+	}
 
 	help := m.help.ShortHelpView([]key.Binding{
 		m.keymap.next,
@@ -295,9 +477,21 @@ func (m model) View() string {
 		m.keymap.quit,
 	})
 
+	// Render each editor, with special rendering for the hovered one
 	var views []string
-	for i := range m.inputs {
-		views = append(views, m.inputs[i].View())
+	for i, ta := range m.inputs {
+		isHovered := i == m.hoveredEditor
+		hovLine := -1
+		hovChar := -1
+
+		if isHovered {
+			hovLine = m.hoveredLine
+			hovChar = m.hoveredChar
+		}
+
+		// Use custom rendering for the hovered editor
+		view := m.renderTextArea(ta, isHovered, hovLine, hovChar)
+		views = append(views, view)
 	}
 
 	// Create a mouse information status line
@@ -312,11 +506,50 @@ func (m model) View() string {
 		Background(mouseBackgroundColor).
 		Padding(0, 1)
 
-	mouseInfo = fmt.Sprintf("\n%s %s",
+	// Include hover information in status
+	var hoverInfo string
+	if m.hoveredEditor >= 0 && m.hoveredLine >= 0 {
+		hoverInfo = fmt.Sprintf(" | Hover: Editor %d, Line %d", m.hoveredEditor, m.hoveredLine)
+		if m.hoveredChar >= 0 {
+			// Get the character value for better information
+			charValue := ""
+			if m.hoveredEditor < len(m.inputs) {
+				value := m.inputs[m.hoveredEditor].Value()
+				lines := strings.Split(value, "\n")
+				if m.hoveredLine < len(lines) {
+					line := lines[m.hoveredLine]
+					if m.hoveredChar < len(line) {
+						charValue = string(line[m.hoveredChar])
+						// Escape special characters for display
+						if charValue == "\t" {
+							charValue = "\\t"
+						} else if charValue == "\n" {
+							charValue = "\\n"
+						} else if charValue == "\r" {
+							charValue = "\\r"
+						} else if charValue == " " {
+							charValue = "␣" // Use symbol for space
+						}
+					}
+				}
+			}
+
+			if charValue != "" {
+				// Apply the hover char style to make the character stand out
+				styledChar := hoveredCharStyle.Render(charValue)
+				hoverInfo += fmt.Sprintf(", Char %d (%s)", m.hoveredChar, styledChar)
+			} else {
+				hoverInfo += fmt.Sprintf(", Char %d", m.hoveredChar)
+			}
+		}
+	}
+
+	mouseInfo = fmt.Sprintf("\n%s %s%s",
 		mouseStyle.Render("Mouse:"),
 		lipgloss.NewStyle().Foreground(mouseTextColor).Render(
 			fmt.Sprintf("%s at %s", m.mouseEvent, m.mousePosition),
 		),
+		hoverInfo,
 	)
 
 	// Only add the top bar and a newline if we have a valid top bar
